@@ -5,6 +5,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/iotaledger/goshimmer/packages/tangle/internal/eligibilitymanager"
+
 	"github.com/iotaledger/goshimmer/packages/database"
 
 	"github.com/cockroachdb/errors"
@@ -49,7 +51,7 @@ type Tangle struct {
 	LedgerState           *LedgerState
 	Utils                 *Utils
 	WeightProvider        WeightProvider
-	EligibilityManager    *EligibilityManager
+	EligibilityManager    *eligibilitymanager.EligibilityManager
 	Events                *Events
 
 	setupParserOnce sync.Once
@@ -84,7 +86,7 @@ func New(options ...Option) (tangle *Tangle) {
 	tangle.MessageFactory = NewMessageFactory(tangle, tangle.TipManager)
 	tangle.Utils = NewUtils(tangle)
 	tangle.Orderer = NewOrderer(tangle)
-	tangle.EligibilityManager = NewEligibilityManager(tangle)
+	tangle.EligibilityManager = eligibilitymanager.NewEligibilityManager(tangle)
 
 	tangle.WeightProvider = tangle.Options.WeightProvider
 

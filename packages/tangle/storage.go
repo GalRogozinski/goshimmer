@@ -3,10 +3,9 @@ package tangle
 import (
 	"fmt"
 	"strconv"
-	"sync"
 	"time"
 
-	"github.com/iotaledger/hive.go/types"
+	"github.com/iotaledger/goshimmer/packages/tangle/internal/eligibilitymanager"
 
 	"github.com/cockroachdb/errors"
 	"github.com/iotaledger/hive.go/byteutils"
@@ -113,7 +112,7 @@ func NewStorage(tangle *Tangle) (storage *Storage) {
 		statementStorage:                  osFactory.New(PrefixStatement, StatementFromObjectStorage, cacheProvider.CacheTime(cacheTime), objectstorage.LeakDetectionEnabled(false)),
 		branchWeightStorage:               osFactory.New(PrefixBranchWeight, BranchWeightFromObjectStorage, cacheProvider.CacheTime(cacheTime), objectstorage.LeakDetectionEnabled(false)),
 		markerMessageMappingStorage:       osFactory.New(PrefixMarkerMessageMapping, MarkerMessageMappingFromObjectStorage, cacheProvider.CacheTime(cacheTime), MarkerMessageMappingPartitionKeys, objectstorage.StoreOnCreation(true)),
-		unconfirmedTxDependenciesStorage:  osFactory.New(PrefixUnconfirmedTxDependencies, UnconfirmedTxDependenciesFromObjectStorage, cacheProvider.CacheTime(cacheTime), objectstorage.LeakDetectionEnabled(false), UnconfirmedTxDependencyPartitionKeys),
+		unconfirmedTxDependenciesStorage:  osFactory.New(PrefixUnconfirmedTxDependencies, eligibilitymanager.UnconfirmedTxDependenciesFromObjectStorage, cacheProvider.CacheTime(cacheTime), objectstorage.LeakDetectionEnabled(false), eligibilitymanager.UnconfirmedTxDependencyPartitionKeys),
 
 		Events: &StorageEvents{
 			MessageStored:        events.NewEvent(MessageIDCaller),
@@ -234,17 +233,21 @@ func (s *Storage) MissingMessages() (ids []MessageID) {
 }
 
 // StoreUnconfirmedTransactionDependencies stores the dependencies
-func (s *Storage) StoreUnconfirmedTransactionDependencies(dependencies *UnconfirmedTxDependency) *CachedUnconfirmedTxDependency {
+func (s *Storage) StoreUnconfirmedTransactionDependencies(dependencies *eligibilitymanager.UnconfirmedTxDependency) *eligibilitymanager.CachedUnconfirmedTxDependency {
 	cachedDependencies := s.unconfirmedTxDependenciesStorage.Store(dependencies)
-	return &CachedUnconfirmedTxDependency{CachedObject: cachedDependencies}
+	return &eligibilitymanager.CachedUnconfirmedTxDependency{CachedObject: cachedDependencies}
 }
 
 // UnconfirmedTransactionDependencies gets the CachedUnconfirmedTransactionDependencies from the objectStorage that matches provided transactionID
-func (s *Storage) UnconfirmedTransactionDependencies(transactionID *ledgerstate.TransactionID) (cachedDependencies *CachedUnconfirmedTxDependency) {
-	cachedObject := s.unconfirmedTxDependenciesStorage.Get(transactionID.Bytes())
-	if !typeutils.IsInterfaceNil(cachedObject) {
-		cachedDependencies = &CachedUnconfirmedTxDependency{CachedObject: cachedObject}
-	}
+func (s *Storage) UnconfirmedTransactionDependencies(transactionID *ledgerstate.TransactionID) (matchedCachedDependencies *eligibilitymanager.CachedUnconfirmedTxDependency) {
+	s.unconfirmedTxDependenciesStorage.ForEach(func(key []byte, cachedObject objectstorage.CachedObject) bool {
+		cachedDependencies := eligibilitymanager.CachedUnconfirmedTxDependency{CachedObject: cachedObject}
+		if cachedDependencies.ID() == *transactionID {
+			matchedCachedDependencies = &cachedDependencies
+			return false
+		}
+		return true
+	})
 	return
 }
 
@@ -454,7 +457,7 @@ func (s *Storage) deleteWeakApprover(approvedMessageID MessageID, approvingMessa
 	s.approverStorage.Delete(byteutils.ConcatBytes(approvedMessageID.Bytes(), WeakApprover.Bytes(), approvingMessage.Bytes()))
 }
 
-func (s *Storage) deleteUnconfirmedTxDependencies(transactionID *ledgerstate.TransactionID) {
+func (s *Storage) DeleteUnconfirmedTxDependencies(transactionID *ledgerstate.TransactionID) {
 	s.unconfirmedTxDependenciesStorage.Delete(transactionID.Bytes())
 }
 
@@ -1146,124 +1149,6 @@ func (c *CachedMissingMessage) Consume(consumer func(missingMessage *MissingMess
 // String returns a human readable version of the CachedMissingMessage.
 func (c *CachedMissingMessage) String() string {
 	return stringify.Struct("CachedMissingMessage",
-		stringify.StructField("CachedObject", c.Unwrap()),
-	)
-}
-
-// endregion ///////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-// region UnconfirmedTxDependency //////////////////////////////////////////////////////////////////////////////////////
-
-var UnconfirmedTxDependencyPartitionKeys = objectstorage.PartitionKey(ledgerstate.TransactionIDLength)
-
-// UnconfirmedTxDependency maps a transaction to all of the transactions that create its inputs which are not yet confirmed
-type UnconfirmedTxDependency struct {
-	objectstorage.StorableObjectFlags
-
-	dependencyTxID ledgerstate.TransactionID
-	dependentTxIDs ledgerstate.TransactionIDs
-	mutex          sync.RWMutex
-}
-
-// NewUnconfirmedTxDependency creates an empty mapping for txID
-func NewUnconfirmedTxDependency(txID *ledgerstate.TransactionID) *UnconfirmedTxDependency {
-	return &UnconfirmedTxDependency{
-		dependencyTxID: *txID,
-		dependentTxIDs: make(ledgerstate.TransactionIDs, 0),
-	}
-}
-
-// AddDependency adds a transaction id dependency
-func (u *UnconfirmedTxDependency) AddDependency(txID *ledgerstate.TransactionID) {
-	u.mutex.Lock()
-	defer u.mutex.Unlock()
-
-	u.dependentTxIDs[*txID] = types.Void
-}
-
-// DeleteDependency deletes a transaction id dependency
-func (u *UnconfirmedTxDependency) DeleteDependency(txID ledgerstate.TransactionID) {
-	u.mutex.Lock()
-	defer u.mutex.Unlock()
-
-	if _, ok := u.dependentTxIDs[txID]; ok {
-		delete(u.dependentTxIDs, txID)
-	}
-}
-
-func (u *UnconfirmedTxDependency) Update(other objectstorage.StorableObject) {
-	panic("implement me")
-}
-
-func (u *UnconfirmedTxDependency) ObjectStorageKey() []byte {
-	u.mutex.RLock()
-	defer u.mutex.RUnlock()
-
-	return u.dependencyTxID.Bytes()
-}
-
-func (u *UnconfirmedTxDependency) ObjectStorageValue() []byte {
-	u.mutex.RLock()
-	defer u.mutex.RUnlock()
-
-	marshalUtil := marshalutil.New(ledgerstate.TransactionIDLength * len(u.dependentTxIDs))
-	for dependency := range u.dependentTxIDs {
-		marshalUtil.WriteBytes(dependency.Bytes())
-	}
-	return marshalUtil.Bytes()
-}
-
-// endregion ///////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-// region CachedUnconfirmedTxDependency ////////////////////////////////////////////////////////////////////////////////
-
-// CachedUnconfirmedTxDependency is a wrapper for the generic CachedObject returned by the object storage that overrides the
-// accessor methods with a type-casted one.
-type CachedUnconfirmedTxDependency struct {
-	objectstorage.CachedObject
-}
-
-// TODO what for?
-// ID returns the dependency transactionID of the UnconfirmedTxDependency.
-func (c *CachedUnconfirmedTxDependency) ID() (id ledgerstate.TransactionID) {
-	id, _, err := ledgerstate.TransactionIDFromBytes(c.Key())
-	if err != nil {
-		panic(err)
-	}
-	return
-}
-
-// Retain marks the CachedObject to still be in use by the program.
-func (c *CachedUnconfirmedTxDependency) Retain() *CachedUnconfirmedTxDependency {
-	return &CachedUnconfirmedTxDependency{c.CachedObject.Retain()}
-}
-
-// Unwrap is the type-casted equivalent of Get. It returns nil if the object does not exist.
-func (c *CachedUnconfirmedTxDependency) Unwrap() *UnconfirmedTxDependency {
-	untypedObject := c.Get()
-	if untypedObject == nil {
-		return nil
-	}
-
-	typedObject := untypedObject.(*UnconfirmedTxDependency)
-	if typedObject == nil || typedObject.IsDeleted() {
-		return nil
-	}
-
-	return typedObject
-}
-
-// Consume unwraps the CachedObject and passes a type-casted version to the consumer (if the object is not empty - it
-// exists). It automatically releases the object when the consumer finishes.
-func (c *CachedUnconfirmedTxDependency) Consume(consumer func(unconfirmedTxDependency *UnconfirmedTxDependency), forceRelease ...bool) (consumed bool) {
-	return c.CachedObject.Consume(func(object objectstorage.StorableObject) {
-		consumer(object.(*UnconfirmedTxDependency))
-	}, forceRelease...)
-}
-
-// String returns a human readable version of the CachedMissingMessage.
-func (c *CachedUnconfirmedTxDependency) String() string {
-	return stringify.Struct("CachedUnconfirmedTxDependency",
 		stringify.StructField("CachedObject", c.Unwrap()),
 	)
 }

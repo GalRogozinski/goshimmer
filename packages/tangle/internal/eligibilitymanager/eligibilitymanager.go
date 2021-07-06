@@ -1,7 +1,9 @@
-package tangle
+package eligibilitymanager
 
 import (
 	"sync"
+
+	tangle2 "github.com/iotaledger/goshimmer/packages/tangle"
 
 	"github.com/cockroachdb/errors"
 	"github.com/iotaledger/hive.go/byteutils"
@@ -23,15 +25,15 @@ type EligibilityEvents struct {
 type EligibilityManager struct {
 	Events *EligibilityEvents
 
-	tangle       *Tangle
+	tangle       *tangle2.Tangle
 	storageMutex sync.Mutex
 }
 
 // NewEligibilityManager creates a new eligibility manager ready to trigger events
-func NewEligibilityManager(tangle *Tangle) (eligibilityManager *EligibilityManager) {
+func NewEligibilityManager(tangle *tangle2.Tangle) (eligibilityManager *EligibilityManager) {
 	eligibilityManager = &EligibilityManager{
 		Events: &EligibilityEvents{
-			MessageEligible: events.NewEvent(MessageIDCaller),
+			MessageEligible: events.NewEvent(tangle2.MessageIDCaller),
 			Error:           events.NewEvent(events.ErrorCaller),
 		},
 
@@ -42,7 +44,7 @@ func NewEligibilityManager(tangle *Tangle) (eligibilityManager *EligibilityManag
 
 // checkEligibility checks if message cn be set to eligible. If yes, it set eligibility flag and triggers message eligible event.
 // If not it stores transactions dependencies to the object storage
-func (e *EligibilityManager) checkEligibility(messageID MessageID) error {
+func (e *EligibilityManager) checkEligibility(messageID tangle2.MessageID) error {
 	cachedMsg := e.tangle.Storage.Message(messageID)
 	defer cachedMsg.Release()
 
@@ -64,7 +66,7 @@ func (e *EligibilityManager) checkEligibility(messageID MessageID) error {
 		e.makeEligible(messageID)
 		return nil
 		// All dependencies are approved by the message
-	} else if NewUtils(e.tangle).AllTransactionsDirectlyApprovedByMessages(pendingDependencies, messageID) {
+	} else if tangle2.NewUtils(e.tangle).AllTransactionsDirectlyApprovedByMessages(pendingDependencies, messageID) {
 		e.makeEligible(messageID)
 		return nil
 	}
@@ -103,8 +105,8 @@ func (e *EligibilityManager) storeMissingDependencies(dependentTxID *ledgerstate
 	return nil
 }
 
-func (e *EligibilityManager) makeEligible(messageID MessageID) {
-	e.tangle.Storage.MessageMetadata(messageID).Consume(func(messageMetadata *MessageMetadata) {
+func (e *EligibilityManager) makeEligible(messageID tangle2.MessageID) {
+	e.tangle.Storage.MessageMetadata(messageID).Consume(func(messageMetadata *tangle2.MessageMetadata) {
 		messageMetadata.SetEligible(true)
 	})
 	e.Events.MessageEligible.Trigger(messageID)
@@ -112,7 +114,7 @@ func (e *EligibilityManager) makeEligible(messageID MessageID) {
 
 // Setup sets up the behavior of the component by making it attach to the relevant events of other components.
 func (e *EligibilityManager) Setup() {
-	e.tangle.Solidifier.Events.MessageSolid.Attach(events.NewClosure(func(messageID MessageID) {
+	e.tangle.Solidifier.Events.MessageSolid.Attach(events.NewClosure(func(messageID tangle2.MessageID) {
 		if err := e.checkEligibility(messageID); err != nil {
 			e.Events.Error.Trigger(errors.Errorf("failed to check eligibility of message %s. %w", messageID.Base58(), err))
 		}
@@ -141,7 +143,7 @@ func (e *EligibilityManager) updateEligibilityAfterDependencyConfirmation(depend
 				})
 			}
 		})
-		e.tangle.Storage.deleteUnconfirmedTxDependencies(dependencyTxID)
+		e.tangle.Storage.DeleteUnconfirmedTxDependencies(dependencyTxID)
 	}
 
 	for _, dependentTx := range dependentTxs {
