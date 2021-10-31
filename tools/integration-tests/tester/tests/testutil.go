@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/iotaledger/hive.go/crypto/ed25519"
+
 	"github.com/cockroachdb/errors"
 	"github.com/iotaledger/hive.go/identity"
 	"github.com/iotaledger/hive.go/types"
@@ -230,6 +232,57 @@ func SendFaucetRequest(t *testing.T, node *framework.Node, addr ledgerstate.Addr
 
 	return resp.ID, sent
 }
+
+// region CreateTransaction from outputs //////////////////////////////
+
+/**
+CreateTransactionFromOutputs takes the given utxos inputs and create a transaction tnat spread the total input balance
+across the targetAddresses. In order to correctly sign we have akeyPair map that maps a given address to its public key.
+Access and Consensus Mana is pledged to the node we specify.
+*/
+func CreateTransactionFromOutputs(t *testing.T, utxos ledgerstate.Outputs, targetAddresses []*ledgerstate.Address, keyPairs map[string]*ed25519.KeyPair, manaPledgeID identity.ID) *ledgerstate.Transaction {
+	// Create Inputs from utxos
+	inputs := ledgerstate.Inputs{}
+	balances := map[ledgerstate.Color]uint64{}
+	for _, output := range utxos {
+		output.Balances().ForEach(func(color ledgerstate.Color, balance uint64) bool {
+			balances[color] += balance
+			return true
+		})
+		inputs = append(inputs, output.Input())
+	}
+
+	// create outputs for each target address
+	numberOfOutputs := len(targetAddresses)
+	outputs := ledgerstate.Outputs{}
+	for i := 0; i < numberOfOutputs; i++ {
+		outBalances := map[ledgerstate.Color]uint64{}
+		for color, balance := range balances {
+			outBalances[color] = balance / uint64(numberOfOutputs)
+			if i == numberOfOutputs-1 {
+				outBalances[color] += balance % uint64(numberOfOutputs)
+			}
+		}
+		output := ledgerstate.NewSigLockedColoredOutput(ledgerstate.NewColoredBalances(outBalances), *targetAddresses[i])
+		outputs = append(outputs, output)
+	}
+
+	// create tx essence
+	txEssence := ledgerstate.NewTransactionEssence(0, time.Now(), manaPledgeID,
+		manaPledgeID, inputs, ledgerstate.NewOutputs(outputs...))
+
+	// create signatures
+	unlockBlocks := []ledgerstate.UnlockBlock{}
+	for i := 0; i < len(inputs); i++ {
+		keyPair := keyPairs[utxos[i].Address().String()]
+		sig := ledgerstate.NewED25519Signature(keyPair.PublicKey, keyPair.PrivateKey.Sign(txEssence.Bytes()))
+		unlockBlocks = append(unlockBlocks, ledgerstate.NewSignatureUnlockBlock(sig))
+	}
+
+	return ledgerstate.NewTransaction(txEssence, unlockBlocks)
+}
+
+// endregion
 
 // SendDataMessage sends a data message on a given peer and returns the id and a DataMessageSent struct.
 func SendDataMessage(t *testing.T, node *framework.Node, data []byte, number int) (string, DataMessageSent) {
