@@ -32,13 +32,15 @@ func TestConflictSpam(t *testing.T) {
 	tests.AwaitInitialFaucetOutputsPrepared(t, faucet, n.Peers())
 
 	firstAddress := peer1.Address(0)
+	firsttAddress := peer1.Address(10)
 	secondAddress := peer2.Address(10)
-	faucetAddress := faucet.Address(10)
+	// faucetAddress := faucet.Address(10)
 
 	for i := 0; i < 4; i++ {
 		tests.SendFaucetRequest(t, peer1, firstAddress)
+		// tests.SendFaucetRequest(t, peer1, firsttAddress)
 		tests.SendFaucetRequest(t, peer2, secondAddress)
-		tests.SendFaucetRequest(t, faucet, faucetAddress)
+		// tests.SendFaucetRequest(t, faucet, faucetAddress)
 
 	}
 	require.Eventually(t, func() bool {
@@ -121,7 +123,7 @@ func sendPairWiseConflicts(t *testing.T, peers []*framework.Node, peerIndex int,
 }
 
 func getOutputsControlledBy(t *testing.T, node *framework.Node, address ledgerstate.Address) ledgerstate.Outputs {
-	walletOutputs := tests.AddressUnspentOutputs(t, node, address)
+	walletOutputs := tests.AddressUnspentOutputs(t, node, address, 1)
 	outputs := ledgerstate.Outputs{}
 	for _, walletOutput := range walletOutputs {
 		t.Logf("wallet output is %v", walletOutput)

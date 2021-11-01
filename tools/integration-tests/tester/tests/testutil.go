@@ -186,10 +186,10 @@ func AwaitInitialFaucetOutputsPrepared(t *testing.T, faucet *framework.Node, pee
 }
 
 // AddressUnspentOutputs returns the unspent outputs on address.
-func AddressUnspentOutputs(t *testing.T, node *framework.Node, address ledgerstate.Address) []jsonmodels.WalletOutput {
+func AddressUnspentOutputs(t *testing.T, node *framework.Node, address ledgerstate.Address, numOfExpectedOuts int) []jsonmodels.WalletOutput {
 	resp, err := node.PostAddressUnspentOutputs([]string{address.Base58()})
 	require.NoErrorf(t, err, "node=%s, address=%s, PostAddressUnspentOutputs failed", node, address.Base58())
-	require.Lenf(t, resp.UnspentOutputs, 1, "invalid response")
+	require.Lenf(t, resp.UnspentOutputs, numOfExpectedOuts, "invalid response")
 	require.Equalf(t, address.Base58(), resp.UnspentOutputs[0].Address.Base58, "invalid response")
 
 	return resp.UnspentOutputs[0].Outputs
@@ -197,7 +197,7 @@ func AddressUnspentOutputs(t *testing.T, node *framework.Node, address ledgersta
 
 // Balance returns the total balance of color at address.
 func Balance(t *testing.T, node *framework.Node, address ledgerstate.Address, color ledgerstate.Color) uint64 {
-	unspentOutputs := AddressUnspentOutputs(t, node, address)
+	unspentOutputs := AddressUnspentOutputs(t, node, address, 1)
 
 	var sum uint64
 	for _, output := range unspentOutputs {
@@ -324,7 +324,7 @@ func SendTransaction(t *testing.T, from *framework.Node, to *framework.Node, col
 	inputAddr := from.Seed.Address(txConfig.FromAddressIndex).Address()
 	outputAddr := to.Seed.Address(txConfig.ToAddressIndex).Address()
 
-	unspentOutputs := AddressUnspentOutputs(t, from, inputAddr)
+	unspentOutputs := AddressUnspentOutputs(t, from, inputAddr, 1)
 	require.NotEmptyf(t, unspentOutputs, "address=%s, no unspent outputs", inputAddr.Base58())
 
 	inputColor := color
@@ -474,7 +474,7 @@ func RequireBalancesEqual(t *testing.T, nodes []*framework.Node, balancesByAddre
 func RequireNoUnspentOutputs(t *testing.T, nodes []*framework.Node, addresses ...ledgerstate.Address) {
 	for _, node := range nodes {
 		for _, addr := range addresses {
-			unspent := AddressUnspentOutputs(t, node, addr)
+			unspent := AddressUnspentOutputs(t, node, addr, 1)
 			require.Empty(t, unspent, "address %s should not have any UTXOs", addr)
 		}
 	}
