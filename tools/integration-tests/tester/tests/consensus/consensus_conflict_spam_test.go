@@ -32,14 +32,16 @@ func TestConflictSpam(t *testing.T) {
 	tests.AwaitInitialFaucetOutputsPrepared(t, faucet, n.Peers())
 
 	firstAddress := peer1.Address(0)
-	firsttAddress := peer1.Address(10)
-	secondAddress := peer2.Address(10)
+	// firsttAddress := peer1.Address(10)
+	// secondAddress := peer2.Address(10)
 	// faucetAddress := faucet.Address(10)
 
+	firstAddresses := []ledgerstate.Address{}
 	for i := 0; i < 4; i++ {
-		tests.SendFaucetRequest(t, peer1, firstAddress)
+		firstAddresses = append(firstAddresses, peer1.Address(i))
+		tests.SendFaucetRequest(t, peer1, firstAddresses[i])
 		// tests.SendFaucetRequest(t, peer1, firsttAddress)
-		tests.SendFaucetRequest(t, peer2, secondAddress)
+		tests.SendFaucetRequest(t, peer2, peer2.Address(i))
 		// tests.SendFaucetRequest(t, faucet, faucetAddress)
 
 	}
@@ -49,10 +51,11 @@ func TestConflictSpam(t *testing.T) {
 
 	// container that will save all the txs made
 	txs := []*ledgerstate.Transaction{}
-	keyPair := peer1.KeyPair(0)
-	t.Logf("keypair is %v", keyPair)
-	keyPairs := map[string]*ed25519.KeyPair{firstAddress.String(): keyPair}
-	outputs := getOutputsControlledBy(t, peer1, firstAddress)
+	keyPairs := map[string]*ed25519.KeyPair{}
+	for i := 0; i < len(firstAddresses); i++ {
+		keyPairs[firstAddresses[i].String()] = peer1.KeyPair(uint64(i))
+	}
+	outputs := getOutputsControlledBy(t, peer1, firstAddresses)
 	t.Logf("outputs are %v", outputs)
 	sendPairWiseConflicts(t, n.Peers(), 0, outputs, keyPairs, &txs, 1)
 	t.Logf("number of txs to verify is %d", len(txs))
@@ -122,14 +125,16 @@ func sendPairWiseConflicts(t *testing.T, peers []*framework.Node, peerIndex int,
 	sendPairWiseConflicts(t, peers, targetIndex, tx3.Essence().Outputs(), targetKeyPairs, txs, iteration+1)
 }
 
-func getOutputsControlledBy(t *testing.T, node *framework.Node, address ledgerstate.Address) ledgerstate.Outputs {
-	walletOutputs := tests.AddressUnspentOutputs(t, node, address, 1)
+func getOutputsControlledBy(t *testing.T, node *framework.Node, addresses []ledgerstate.Address) ledgerstate.Outputs {
 	outputs := ledgerstate.Outputs{}
-	for _, walletOutput := range walletOutputs {
-		t.Logf("wallet output is %v", walletOutput)
-		output, err := walletOutput.Output.ToLedgerstateOutput()
-		require.NoError(t, err, "Failed to convert output to ledgerstate output")
-		outputs = append(outputs, output)
+	for _, address := range addresses {
+		walletOutputs := tests.AddressUnspentOutputs(t, node, address, 1)
+		for _, walletOutput := range walletOutputs {
+			t.Logf("wallet output is %v", walletOutput)
+			output, err := walletOutput.Output.ToLedgerstateOutput()
+			require.NoError(t, err, "Failed to convert output to ledgerstate output")
+			outputs = append(outputs, output)
+		}
 	}
 	return outputs
 }
