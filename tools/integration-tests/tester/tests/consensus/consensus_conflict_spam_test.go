@@ -18,11 +18,11 @@ import (
 func TestConflictSpam(t *testing.T) {
 	ctx, cancel := tests.Context(context.Background(), t)
 	defer cancel()
-	n, err := f.CreateNetwork(ctx, t.Name(), 3, framework.CreateNetworkConfig{
+	n, err := f.CreateNetwork(ctx, t.Name(), 4, framework.CreateNetworkConfig{
 		Faucet:      true,
 		StartSynced: true,
 		Activity:    true,
-	})
+	}, tests.EqualDefaultConfigFunc(t, false))
 	require.NoError(t, err)
 	defer tests.ShutdownNetwork(ctx, t, n)
 
@@ -37,7 +37,7 @@ func TestConflictSpam(t *testing.T) {
 	// faucetAddress := faucet.Address(10)
 
 	firstAddresses := []ledgerstate.Address{}
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 1; i++ {
 		firstAddresses = append(firstAddresses, peer1.Address(i))
 		tests.SendFaucetRequest(t, peer1, firstAddresses[i])
 		// tests.SendFaucetRequest(t, peer1, firsttAddress)
@@ -116,9 +116,24 @@ func sendPairWiseConflicts(t *testing.T, peers []*framework.Node, peerIndex int,
 
 	*txs = append(*txs, tx1, tx2, tx3)
 
-	peers[peerIndex].PostTransaction(tx1.Bytes())
-	peers[(peerIndex+1)%len(peers)].PostTransaction(tx2.Bytes())
-	peers[(peerIndex+2)%len(peers)].PostTransaction(tx3.Bytes())
+	resp, err := peers[peerIndex].PostTransaction(tx1.Bytes())
+	t.Logf("post tx %s on peer %s", tx1.ID().Base58(), peers[peerIndex].Name())
+	require.NoError(t, err, "There was an error posting transaction %s to peer %s",
+		tx1.ID().Base58(), peers[peerIndex].Name())
+	require.Empty(t, resp.Error, "There was an error in the response while posting transaction %s to peer %s",
+		tx1.ID().Base58(), peers[peerIndex].Name())
+	resp, err = peers[(peerIndex+1)%len(peers)].PostTransaction(tx2.Bytes())
+	t.Logf("post tx %s on peer %s", tx2.ID().Base58(), peers[(peerIndex+1)%len(peers)].Name())
+	require.NoError(t, err, "There was an error in the response while posting transaction %s to peer %s",
+		tx1.ID().Base58(), peers[(peerIndex+1)%len(peers)].Name())
+	require.Empty(t, resp.Error, "There was an error in the response while posting transaction %s to peer %s",
+		tx2.ID().Base58(), peers[(peerIndex+1)%len(peers)].Name())
+	resp, err = peers[(peerIndex+2)%len(peers)].PostTransaction(tx3.Bytes())
+	t.Logf("post tx %s on peer %s", tx3.ID().Base58(), peers[(peerIndex+2)%len(peers)].Name())
+	require.NoError(t, err, "There was an error posting transaction %s to peer %s",
+		tx2.ID().Base58(), peers[(peerIndex+2)%len(peers)].Name())
+	require.Empty(t, resp.Error, "There was an error in the response while posting transaction %s to peer %s",
+		tx2.ID().Base58())
 
 	sendPairWiseConflicts(t, peers, targetIndex, tx1.Essence().Outputs(), targetKeyPairs, txs, iteration+1)
 	sendPairWiseConflicts(t, peers, targetIndex, tx2.Essence().Outputs(), targetKeyPairs, txs, iteration+1)

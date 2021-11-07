@@ -274,7 +274,9 @@ func CreateTransactionFromOutputs(t *testing.T, utxos ledgerstate.Outputs, targe
 	// create signatures
 	unlockBlocks := []ledgerstate.UnlockBlock{}
 	for i := 0; i < len(inputs); i++ {
-		keyPair := keyPairs[utxos[i].Address().String()]
+		addressKey := utxos[i].Address().String()
+		keyPair := keyPairs[addressKey]
+		require.NotNilf(t, keyPair, "missing key pair for address %s", addressKey)
 		sig := ledgerstate.NewED25519Signature(keyPair.PublicKey, keyPair.PrivateKey.Sign(txEssence.Bytes()))
 		unlockBlocks = append(unlockBlocks, ledgerstate.NewSignatureUnlockBlock(sig))
 	}
