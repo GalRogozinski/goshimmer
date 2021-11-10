@@ -15,6 +15,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// constant var, shouldn't be changed
+var tokensPerRequest int
+
 func TestConflictSpam(t *testing.T) {
 	ctx, cancel := tests.Context(context.Background(), t)
 	defer cancel()
@@ -26,38 +29,15 @@ func TestConflictSpam(t *testing.T) {
 	require.NoError(t, err)
 	defer tests.ShutdownNetwork(ctx, t, n)
 
-	faucet, peer1, peer2 := n.Peers()[0], n.Peers()[1], n.Peers()[2]
-	tokensPerRequest := faucet.Config().TokensPerRequest
+	faucet := n.Peers()[0]
+	tokensPerRequest = faucet.Config().TokensPerRequest
 
 	tests.AwaitInitialFaucetOutputsPrepared(t, faucet, n.Peers())
 
-	firstAddress := peer1.Address(0)
-	// firsttAddress := peer1.Address(10)
-	// secondAddress := peer2.Address(10)
-	// faucetAddress := faucet.Address(10)
-
-	firstAddresses := []ledgerstate.Address{}
-	for i := 0; i < 1; i++ {
-		firstAddresses = append(firstAddresses, peer1.Address(i))
-		tests.SendFaucetRequest(t, peer1, firstAddresses[i])
-		// tests.SendFaucetRequest(t, peer1, firsttAddress)
-		tests.SendFaucetRequest(t, peer2, peer2.Address(i))
-		// tests.SendFaucetRequest(t, faucet, faucetAddress)
-
-	}
-	require.Eventually(t, func() bool {
-		return tests.Balance(t, peer1, firstAddress, ledgerstate.ColorIOTA) >= uint64(tokensPerRequest)
-	}, tests.Timeout, tests.Tick)
-
-	// container that will save all the txs made
 	txs := []*ledgerstate.Transaction{}
-	keyPairs := map[string]*ed25519.KeyPair{}
-	for i := 0; i < len(firstAddresses); i++ {
-		keyPairs[firstAddresses[i].String()] = peer1.KeyPair(uint64(i))
+	for i := 0; i < 3; i++ {
+		sendPairWiseConflicts(t, n.Peers(), &txs, i)
 	}
-	outputs := getOutputsControlledBy(t, peer1, firstAddresses)
-	t.Logf("outputs are %v", outputs)
-	sendPairWiseConflicts(t, n.Peers(), 0, outputs, keyPairs, &txs, 1)
 	t.Logf("number of txs to verify is %d", len(txs))
 	verifyConfirmationsOnPeers(t, n.Peers(), txs)
 }
@@ -88,26 +68,36 @@ func verifyConfirmationsOnPeers(t *testing.T, peers []*framework.Node, txs []*le
 
 /**
 sendPairWiseConflicts receives a list of outputs controlled by a peer with certain peer index.
-It send them all to addresses controlled by the next peer, but it does so several time to create pairwisde conflicts.
-It then recursively continue to do so for the next peers.
+It send them all to addresses controlled by the next peer, but it does so several time to create pairwise conflicts.
 */
-func sendPairWiseConflicts(t *testing.T, peers []*framework.Node, peerIndex int, outputs ledgerstate.Outputs,
-	keyPairs map[string]*ed25519.KeyPair, txs *[]*ledgerstate.Transaction, iteration int) {
+func sendPairWiseConflicts(t *testing.T, peers []*framework.Node, txs *[]*ledgerstate.Transaction, iteration int) {
 	if iteration == 3 {
 		t.Logf("done sending pairwise conflicts")
 		return
 	}
+
 	t.Logf("send pairwise conflicts on iteration %d", iteration)
 
-	targetIndex := (peerIndex + 1) % len(peers)
+	peerIndex := iteration % len(peers)
+	originPeer := peers[peerIndex]
+	originAddressIndex := iteration*3 + 4
+	originAddress := originPeer.Address(originAddressIndex)
+	tests.SendFaucetRequest(t, originPeer, originAddress)
+
+	require.Eventually(t, func() bool {
+		return tests.Balance(t, originPeer, originAddress, ledgerstate.ColorIOTA) >= uint64(tokensPerRequest)
+	}, tests.Timeout, tests.Tick)
+
+	outputs := getOutputsControlledBy(t, originPeer, originAddress)
+	keyPair := originPeer.KeyPair(uint64(originAddressIndex))
+	keyPairs := map[string]*ed25519.KeyPair{originAddress.String(): keyPair}
+	targetIndex := (iteration + 1) % len(peers)
 	targetPeer := peers[targetIndex]
 	targetAddresses := []*ledgerstate.Address{}
-	targetKeyPairs := map[string]*ed25519.KeyPair{}
 
-	for i := 0; i < 3; i++ {
+	for i := iteration * 3; i < iteration*3+3; i++ {
 		targetAddress := targetPeer.Address(i)
 		targetAddresses = append(targetAddresses, &targetAddress)
-		targetKeyPairs[targetAddress.String()] = targetPeer.KeyPair(uint64(i))
 	}
 
 	tx1 := tests.CreateTransactionFromOutputs(t, outputs, targetAddresses, keyPairs, targetPeer.ID())
@@ -134,13 +124,9 @@ func sendPairWiseConflicts(t *testing.T, peers []*framework.Node, peerIndex int,
 		tx2.ID().Base58(), peers[(peerIndex+2)%len(peers)].Name())
 	require.Empty(t, resp.Error, "There was an error in the response while posting transaction %s to peer %s",
 		tx2.ID().Base58())
-
-	sendPairWiseConflicts(t, peers, targetIndex, tx1.Essence().Outputs(), targetKeyPairs, txs, iteration+1)
-	sendPairWiseConflicts(t, peers, targetIndex, tx2.Essence().Outputs(), targetKeyPairs, txs, iteration+1)
-	sendPairWiseConflicts(t, peers, targetIndex, tx3.Essence().Outputs(), targetKeyPairs, txs, iteration+1)
 }
 
-func getOutputsControlledBy(t *testing.T, node *framework.Node, addresses []ledgerstate.Address) ledgerstate.Outputs {
+func getOutputsControlledBy(t *testing.T, node *framework.Node, addresses ...ledgerstate.Address) ledgerstate.Outputs {
 	outputs := ledgerstate.Outputs{}
 	for _, address := range addresses {
 		walletOutputs := tests.AddressUnspentOutputs(t, node, address, 1)
