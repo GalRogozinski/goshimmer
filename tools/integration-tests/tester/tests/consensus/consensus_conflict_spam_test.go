@@ -29,15 +29,33 @@ func TestConflictSpam(t *testing.T) {
 	require.NoError(t, err)
 	defer tests.ShutdownNetwork(ctx, t, n)
 
-	faucet := n.Peers()[0]
+	faucet, peer_1 := n.Peers()[0], n.Peers()[1]
 	tokensPerRequest = faucet.Config().TokensPerRequest
 
 	tests.AwaitInitialFaucetOutputsPrepared(t, faucet, n.Peers())
 
+	fundingAddress := peer_1.Address(0)
+	tests.SendFaucetRequest(t, peer_1, fundingAddress)
+	require.Eventually(t, func() bool {
+		return tests.Balance(t, peer_1, fundingAddress, ledgerstate.ColorIOTA) >= uint64(tokensPerRequest)
+	}, tests.Timeout, tests.Tick)
+
+	addresses := make([]*ledgerstate.Address, 100)
+	keyPairs := map[string]*ed25519.KeyPair{}
+	for i := 0; i < 100; i++ {
+		address := peer_1.Address(i)
+		addresses[i] = &address
+		keyPairs[address.String()] = peer_1.KeyPair(uint64(i))
+	}
+
+	outputs := getOutputsControlledBy(t, peer_1, fundingAddress)
+	keyPair := map[string]*ed25519.KeyPair{fundingAddress.String(): peer_1.KeyPair(0)}
+	outputs = splitToAddresses(t, peer_1, outputs[0], keyPair, addresses...)
+
 	txs := []*ledgerstate.Transaction{}
-	for i := 0; i < 3; i++ {
-		sendPairWiseConflicts(t, n.Peers(), &txs, i)
-		sendTripleConflicts(t, n.Peers(), &txs, i)
+	for i := 0; i < 4; i++ {
+		sendPairWiseConflicts(t, n.Peers(), outputs[i*3:i*3+3], keyPairs, &txs, i)
+		// sendTripleConflicts(t, n.Peers(), outputs, &txs, i)
 	}
 	t.Logf("number of txs to verify is %d", len(txs))
 	verifyConfirmationsOnPeers(t, n.Peers(), txs)
@@ -72,23 +90,19 @@ sendPairWiseConflicts receives a list of outputs controlled by a peer with certa
 It send them all to addresses controlled by the next peer, but it does so several time to create pairwise conflicts.
 The conflicts are TX_B<->TX_A<->TX_C
 */
-func sendPairWiseConflicts(t *testing.T, peers []*framework.Node, txs *[]*ledgerstate.Transaction, iteration int) {
+func sendPairWiseConflicts(t *testing.T, peers []*framework.Node, outputs ledgerstate.Outputs,
+	keyPairs map[string]*ed25519.KeyPair,
+	txs *[]*ledgerstate.Transaction, iteration int) {
+
 	t.Logf("send pairwise conflicts on iteration %d", iteration)
+	peerIndex := (iteration + 1) % len(peers)
 
-	peerIndex, originPeer, originAddressIndex, originAddress := determineOriginNodeAndAddress(t, peers, iteration)
-	tests.SendFaucetRequest(t, originPeer, originAddress)
-	require.Eventually(t, func() bool {
-		return tests.Balance(t, originPeer, originAddress, ledgerstate.ColorIOTA) >= uint64(tokensPerRequest)
-	}, tests.Timeout, tests.Tick)
+	// find target addresses
+	targetAddresses := determineTargets(peers, iteration)
 
-	outputs := getOutputsControlledBy(t, originPeer, originAddress)
-	keyPairs, targetPeer, targetAddresses := determineTargets(peers, originPeer, originAddress, originAddressIndex, iteration)
-
-	outputs = splitToAddresses(t, originPeer, outputs[0], keyPairs, targetAddresses...)
-
-	tx1 := tests.CreateTransactionFromOutputs(t, targetPeer.ID(), targetAddresses, keyPairs, outputs...)
-	tx2 := tests.CreateTransactionFromOutputs(t, targetPeer.ID(), targetAddresses, keyPairs, outputs[0])
-	tx3 := tests.CreateTransactionFromOutputs(t, targetPeer.ID(), targetAddresses, keyPairs, outputs[2])
+	tx1 := tests.CreateTransactionFromOutputs(t, peers[0].ID(), targetAddresses, keyPairs, outputs...)
+	tx2 := tests.CreateTransactionFromOutputs(t, peers[1].ID(), targetAddresses, keyPairs, outputs[0])
+	tx3 := tests.CreateTransactionFromOutputs(t, peers[2].ID(), targetAddresses, keyPairs, outputs[2])
 
 	*txs = append(*txs, tx1, tx2, tx3)
 
@@ -114,50 +128,48 @@ func sendPairWiseConflicts(t *testing.T, peers []*framework.Node, txs *[]*ledger
 
 /**
 TX_A<->TX_B TX_B<->TX_C TX_C<->TX_A
-*/
-func sendTripleConflicts(t *testing.T, peers []*framework.Node, txs *[]*ledgerstate.Transaction, iteration int) {
-	t.Logf("send triple conflicts on iteration %d", iteration)
+//*/
+//func sendTripleConflicts(t *testing.T, peers []*framework.Node, txs *[]*ledgerstate.Transaction, iteration int) {
+//	t.Logf("send triple conflicts on iteration %d", iteration)
+//
+//	peerIndex, originPeer, originAddressIndex, originAddress := determineOriginNodeAndAddress(t, peers, iteration)
+//	tests.SendFaucetRequest(t, originPeer, originAddress)
+//	require.Eventually(t, func() bool {
+//		return tests.Balance(t, originPeer, originAddress, ledgerstate.ColorIOTA) >= uint64(tokensPerRequest)
+//	}, tests.Timeout, tests.Tick)
+//
+//	outputs := getOutputsControlledBy(t, originPeer, originAddress)
+//	keyPairs, targetPeer, targetAddresses := determineTargets(peers, originPeer, originAddress, originAddressIndex, iteration)
+//
+//	outputs = splitToAddresses(t, originPeer, outputs[0], keyPairs, targetAddresses...)
+//
+//	tx1 := tests.CreateTransactionFromOutputs(t, targetPeer.ID(), targetAddresses, keyPairs, outputs...)
+//	tx2 := tests.CreateTransactionFromOutputs(t, targetPeer.ID(), targetAddresses, keyPairs, outputs[0], outputs[1])
+//	tx3 := tests.CreateTransactionFromOutputs(t, targetPeer.ID(), targetAddresses, keyPairs, outputs[1], outputs[2])
+//
+//	*txs = append(*txs, tx1, tx2, tx3)
+//
+//	resp, err := peers[peerIndex].PostTransaction(tx1.Bytes())
+//	t.Logf("post tx %s on peer %s", tx1.ID().Base58(), peers[peerIndex].Name())
+//	require.NoError(t, err, "There was an error posting transaction %s to peer %s",
+//		tx1.ID().Base58(), peers[peerIndex].Name())
+//	require.Empty(t, resp.Error, "There was an error in the response while posting transaction %s to peer %s",
+//		tx1.ID().Base58(), peers[peerIndex].Name())
+//	resp, err = peers[(peerIndex+1)%len(peers)].PostTransaction(tx2.Bytes())
+//	t.Logf("post tx %s on peer %s", tx2.ID().Base58(), peers[(peerIndex+1)%len(peers)].Name())
+//	require.NoError(t, err, "There was an error in the response while posting transaction %s to peer %s",
+//		tx1.ID().Base58(), peers[(peerIndex+1)%len(peers)].Name())
+//	require.Empty(t, resp.Error, "There was an error in the response while posting transaction %s to peer %s",
+//		tx2.ID().Base58(), peers[(peerIndex+1)%len(peers)].Name())
+//	resp, err = peers[(peerIndex+2)%len(peers)].PostTransaction(tx3.Bytes())
+//	t.Logf("post tx %s on peer %s", tx3.ID().Base58(), peers[(peerIndex+2)%len(peers)].Name())
+//	require.NoError(t, err, "There was an error posting transaction %s to peer %s",
+//		tx2.ID().Base58(), peers[(peerIndex+2)%len(peers)].Name())
+//	require.Empty(t, resp.Error, "There was an error in the response while posting transaction %s to peer %s",
+//		tx2.ID().Base58())
+//}
 
-	peerIndex, originPeer, originAddressIndex, originAddress := determineOriginNodeAndAddress(t, peers, iteration)
-	tests.SendFaucetRequest(t, originPeer, originAddress)
-	require.Eventually(t, func() bool {
-		return tests.Balance(t, originPeer, originAddress, ledgerstate.ColorIOTA) >= uint64(tokensPerRequest)
-	}, tests.Timeout, tests.Tick)
-
-	outputs := getOutputsControlledBy(t, originPeer, originAddress)
-	keyPairs, targetPeer, targetAddresses := determineTargets(peers, originPeer, originAddress, originAddressIndex, iteration)
-
-	outputs = splitToAddresses(t, originPeer, outputs[0], keyPairs, targetAddresses...)
-
-	tx1 := tests.CreateTransactionFromOutputs(t, targetPeer.ID(), targetAddresses, keyPairs, outputs...)
-	tx2 := tests.CreateTransactionFromOutputs(t, targetPeer.ID(), targetAddresses, keyPairs, outputs[0], outputs[1])
-	tx3 := tests.CreateTransactionFromOutputs(t, targetPeer.ID(), targetAddresses, keyPairs, outputs[1], outputs[2])
-
-	*txs = append(*txs, tx1, tx2, tx3)
-
-	resp, err := peers[peerIndex].PostTransaction(tx1.Bytes())
-	t.Logf("post tx %s on peer %s", tx1.ID().Base58(), peers[peerIndex].Name())
-	require.NoError(t, err, "There was an error posting transaction %s to peer %s",
-		tx1.ID().Base58(), peers[peerIndex].Name())
-	require.Empty(t, resp.Error, "There was an error in the response while posting transaction %s to peer %s",
-		tx1.ID().Base58(), peers[peerIndex].Name())
-	resp, err = peers[(peerIndex+1)%len(peers)].PostTransaction(tx2.Bytes())
-	t.Logf("post tx %s on peer %s", tx2.ID().Base58(), peers[(peerIndex+1)%len(peers)].Name())
-	require.NoError(t, err, "There was an error in the response while posting transaction %s to peer %s",
-		tx1.ID().Base58(), peers[(peerIndex+1)%len(peers)].Name())
-	require.Empty(t, resp.Error, "There was an error in the response while posting transaction %s to peer %s",
-		tx2.ID().Base58(), peers[(peerIndex+1)%len(peers)].Name())
-	resp, err = peers[(peerIndex+2)%len(peers)].PostTransaction(tx3.Bytes())
-	t.Logf("post tx %s on peer %s", tx3.ID().Base58(), peers[(peerIndex+2)%len(peers)].Name())
-	require.NoError(t, err, "There was an error posting transaction %s to peer %s",
-		tx2.ID().Base58(), peers[(peerIndex+2)%len(peers)].Name())
-	require.Empty(t, resp.Error, "There was an error in the response while posting transaction %s to peer %s",
-		tx2.ID().Base58())
-}
-
-func determineTargets(peers []*framework.Node, originPeer *framework.Node, originAddress ledgerstate.Address, originAddressIndex int, iteration int) (map[string]*ed25519.KeyPair, *framework.Node, []*ledgerstate.Address) {
-	keyPair := originPeer.KeyPair(uint64(originAddressIndex))
-	keyPairs := map[string]*ed25519.KeyPair{originAddress.String(): keyPair}
+func determineTargets(peers []*framework.Node, iteration int) []*ledgerstate.Address {
 	targetIndex := (iteration + 1) % len(peers)
 	targetPeer := peers[targetIndex]
 	targetAddresses := []*ledgerstate.Address{}
@@ -165,13 +177,12 @@ func determineTargets(peers []*framework.Node, originPeer *framework.Node, origi
 	for i := iteration * 3; i < iteration*3+3; i++ {
 		targetAddress := targetPeer.Address(i)
 		targetAddresses = append(targetAddresses, &targetAddress)
-		keyPairs[targetAddress.String()] = targetPeer.KeyPair(uint64(i))
 	}
-	return keyPairs, targetPeer, targetAddresses
+	return targetAddresses
 }
 
 // decides on which peer and address to use. Also returns their indexes
-func determineOriginNodeAndAddress(t *testing.T, peers []*framework.Node, iteration int) (int, *framework.Node, int, ledgerstate.Address) {
+func determineOriginNodeAndAddress(peers []*framework.Node, iteration int) (int, *framework.Node, int, ledgerstate.Address) {
 	peerIndex := iteration % len(peers)
 	originPeer := peers[peerIndex]
 	originAddressIndex := iteration*3 + 4
