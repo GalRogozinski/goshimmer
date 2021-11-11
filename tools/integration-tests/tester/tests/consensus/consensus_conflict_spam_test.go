@@ -98,11 +98,14 @@ func sendPairWiseConflicts(t *testing.T, peers []*framework.Node, txs *[]*ledger
 	for i := iteration * 3; i < iteration*3+3; i++ {
 		targetAddress := targetPeer.Address(i)
 		targetAddresses = append(targetAddresses, &targetAddress)
+		keyPairs[targetAddress.String()] = targetPeer.KeyPair(uint64(i))
 	}
 
-	tx1 := tests.CreateTransactionFromOutputs(t, outputs, targetAddresses, keyPairs, targetPeer.ID())
-	tx2 := tests.CreateTransactionFromOutputs(t, outputs[:1], targetAddresses, keyPairs, targetPeer.ID())
-	tx3 := tests.CreateTransactionFromOutputs(t, outputs[len(outputs)-1:], targetAddresses, keyPairs, targetPeer.ID())
+	outputs = splitToAddresses(t, originPeer, outputs[0], keyPairs, targetAddresses...)
+
+	tx1 := tests.CreateTransactionFromOutputs(t, targetPeer.ID(), targetAddresses, keyPairs, outputs...)
+	tx2 := tests.CreateTransactionFromOutputs(t, targetPeer.ID(), targetAddresses, keyPairs, outputs[0])
+	tx3 := tests.CreateTransactionFromOutputs(t, targetPeer.ID(), targetAddresses, keyPairs, outputs[2])
 
 	*txs = append(*txs, tx1, tx2, tx3)
 
@@ -138,4 +141,11 @@ func getOutputsControlledBy(t *testing.T, node *framework.Node, addresses ...led
 		}
 	}
 	return outputs
+}
+
+func splitToAddresses(t *testing.T, node *framework.Node, output ledgerstate.Output, keyPairs map[string]*ed25519.KeyPair, addresses ...*ledgerstate.Address) ledgerstate.Outputs {
+	transaction := tests.CreateTransactionFromOutputs(t, node.ID(), addresses, keyPairs, output)
+	_, err := node.PostTransaction(transaction.Bytes())
+	require.NoError(t, err, "Error occured while trying to split addresses")
+	return transaction.Essence().Outputs()
 }
