@@ -51,10 +51,13 @@ func TestConflictSpam(t *testing.T) {
 	outputs := getOutputsControlledBy(t, peer_1, fundingAddress)
 	keyPair := map[string]*ed25519.KeyPair{fundingAddress.String(): peer_1.KeyPair(0)}
 	outputs = splitToAddresses(t, peer_1, outputs[0], keyPair, addresses...)
+	const numOfPairWiseConflicts = 4
+	pairwiseOutputs := outputs[:(numOfPairWiseConflicts-1)*3+3]
+	// tripletOutputs := outputs[len(pairwiseOutputs):]
 
 	txs := []*ledgerstate.Transaction{}
-	for i := 0; i < 4; i++ {
-		sendPairWiseConflicts(t, n.Peers(), outputs[i*3:i*3+3], keyPairs, &txs, i)
+	for i := 0; i < numOfPairWiseConflicts; i++ {
+		sendPairWiseConflicts(t, n.Peers(), pairwiseOutputs[i*3:i*3+3], keyPairs, &txs, i)
 		// sendTripleConflicts(t, n.Peers(), outputs, &txs, i)
 	}
 	t.Logf("number of txs to verify is %d", len(txs))
@@ -106,68 +109,42 @@ func sendPairWiseConflicts(t *testing.T, peers []*framework.Node, outputs ledger
 
 	*txs = append(*txs, tx1, tx2, tx3)
 
-	resp, err := peers[peerIndex].PostTransaction(tx1.Bytes())
-	t.Logf("post tx %s on peer %s", tx1.ID().Base58(), peers[peerIndex].Name())
-	require.NoError(t, err, "There was an error posting transaction %s to peer %s",
-		tx1.ID().Base58(), peers[peerIndex].Name())
-	require.Empty(t, resp.Error, "There was an error in the response while posting transaction %s to peer %s",
-		tx1.ID().Base58(), peers[peerIndex].Name())
-	resp, err = peers[(peerIndex+1)%len(peers)].PostTransaction(tx2.Bytes())
-	t.Logf("post tx %s on peer %s", tx2.ID().Base58(), peers[(peerIndex+1)%len(peers)].Name())
-	require.NoError(t, err, "There was an error in the response while posting transaction %s to peer %s",
-		tx1.ID().Base58(), peers[(peerIndex+1)%len(peers)].Name())
-	require.Empty(t, resp.Error, "There was an error in the response while posting transaction %s to peer %s",
-		tx2.ID().Base58(), peers[(peerIndex+1)%len(peers)].Name())
-	resp, err = peers[(peerIndex+2)%len(peers)].PostTransaction(tx3.Bytes())
-	t.Logf("post tx %s on peer %s", tx3.ID().Base58(), peers[(peerIndex+2)%len(peers)].Name())
-	require.NoError(t, err, "There was an error posting transaction %s to peer %s",
-		tx2.ID().Base58(), peers[(peerIndex+2)%len(peers)].Name())
-	require.Empty(t, resp.Error, "There was an error in the response while posting transaction %s to peer %s",
-		tx2.ID().Base58())
+	PostTransactions(t, peers, peerIndex, "pairwise conflicts", tx1, tx2, tx3)
 }
 
 /**
 TX_A<->TX_B TX_B<->TX_C TX_C<->TX_A
-//*/
-//func sendTripleConflicts(t *testing.T, peers []*framework.Node, txs *[]*ledgerstate.Transaction, iteration int) {
-//	t.Logf("send triple conflicts on iteration %d", iteration)
-//
-//	peerIndex, originPeer, originAddressIndex, originAddress := determineOriginNodeAndAddress(t, peers, iteration)
-//	tests.SendFaucetRequest(t, originPeer, originAddress)
-//	require.Eventually(t, func() bool {
-//		return tests.Balance(t, originPeer, originAddress, ledgerstate.ColorIOTA) >= uint64(tokensPerRequest)
-//	}, tests.Timeout, tests.Tick)
-//
-//	outputs := getOutputsControlledBy(t, originPeer, originAddress)
-//	keyPairs, targetPeer, targetAddresses := determineTargets(peers, originPeer, originAddress, originAddressIndex, iteration)
-//
-//	outputs = splitToAddresses(t, originPeer, outputs[0], keyPairs, targetAddresses...)
-//
-//	tx1 := tests.CreateTransactionFromOutputs(t, targetPeer.ID(), targetAddresses, keyPairs, outputs...)
-//	tx2 := tests.CreateTransactionFromOutputs(t, targetPeer.ID(), targetAddresses, keyPairs, outputs[0], outputs[1])
-//	tx3 := tests.CreateTransactionFromOutputs(t, targetPeer.ID(), targetAddresses, keyPairs, outputs[1], outputs[2])
-//
-//	*txs = append(*txs, tx1, tx2, tx3)
-//
-//	resp, err := peers[peerIndex].PostTransaction(tx1.Bytes())
-//	t.Logf("post tx %s on peer %s", tx1.ID().Base58(), peers[peerIndex].Name())
-//	require.NoError(t, err, "There was an error posting transaction %s to peer %s",
-//		tx1.ID().Base58(), peers[peerIndex].Name())
-//	require.Empty(t, resp.Error, "There was an error in the response while posting transaction %s to peer %s",
-//		tx1.ID().Base58(), peers[peerIndex].Name())
-//	resp, err = peers[(peerIndex+1)%len(peers)].PostTransaction(tx2.Bytes())
-//	t.Logf("post tx %s on peer %s", tx2.ID().Base58(), peers[(peerIndex+1)%len(peers)].Name())
-//	require.NoError(t, err, "There was an error in the response while posting transaction %s to peer %s",
-//		tx1.ID().Base58(), peers[(peerIndex+1)%len(peers)].Name())
-//	require.Empty(t, resp.Error, "There was an error in the response while posting transaction %s to peer %s",
-//		tx2.ID().Base58(), peers[(peerIndex+1)%len(peers)].Name())
-//	resp, err = peers[(peerIndex+2)%len(peers)].PostTransaction(tx3.Bytes())
-//	t.Logf("post tx %s on peer %s", tx3.ID().Base58(), peers[(peerIndex+2)%len(peers)].Name())
-//	require.NoError(t, err, "There was an error posting transaction %s to peer %s",
-//		tx2.ID().Base58(), peers[(peerIndex+2)%len(peers)].Name())
-//	require.Empty(t, resp.Error, "There was an error in the response while posting transaction %s to peer %s",
-//		tx2.ID().Base58())
-//}
+*/
+func sendTripleConflicts(t *testing.T, peers []*framework.Node, outputs ledgerstate.Outputs,
+	keyPairs map[string]*ed25519.KeyPair,
+	txs *[]*ledgerstate.Transaction, iteration int) {
+	t.Logf("send triple conflicts on iteration %d", iteration)
+
+	peerIndex := (iteration + 1) % len(peers)
+
+	// find target addresses
+	targetAddresses := determineTargets(peers, iteration)
+
+	tx1 := tests.CreateTransactionFromOutputs(t, peers[0].ID(), targetAddresses, keyPairs, outputs...)
+	tx2 := tests.CreateTransactionFromOutputs(t, peers[1].ID(), targetAddresses, keyPairs, outputs[0], outputs[1])
+	tx3 := tests.CreateTransactionFromOutputs(t, peers[2].ID(), targetAddresses, keyPairs, outputs[1], outputs[2])
+
+	*txs = append(*txs, tx1, tx2, tx3)
+
+	PostTransactions(t, peers, peerIndex, "triplet conflicts", tx1, tx2, tx3)
+}
+
+func PostTransactions(t *testing.T, peers []*framework.Node, peerIndex int, attackName string, txs ...*ledgerstate.Transaction) {
+	for i, tx := range txs {
+		newPeerIndex := (peerIndex + i) % len(peers)
+		resp, err := peers[newPeerIndex].PostTransaction(tx.Bytes())
+		t.Logf("%s: post tx %s on peer %s", attackName, tx.ID().Base58(), peers[peerIndex].Name())
+		require.NoError(t, err, "%s: There was an error posting transaction %s to peer %s",
+			attackName, tx.ID().Base58(), peers[peerIndex].Name())
+		require.Empty(t, resp.Error, "%s: There was an error in the response while posting transaction %s to peer %s",
+			attackName, tx.ID().Base58(), peers[peerIndex].Name())
+	}
+}
 
 func determineTargets(peers []*framework.Node, iteration int) []*ledgerstate.Address {
 	targetIndex := (iteration + 1) % len(peers)
