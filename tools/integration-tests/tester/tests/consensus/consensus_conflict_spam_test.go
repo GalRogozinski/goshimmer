@@ -49,16 +49,16 @@ func TestConflictSpam(t *testing.T) {
 	}
 
 	outputs := getOutputsControlledBy(t, peer_1, fundingAddress)
-	keyPair := map[string]*ed25519.KeyPair{fundingAddress.String(): peer_1.KeyPair(0)}
-	outputs = splitToAddresses(t, peer_1, outputs[0], keyPair, addresses...)
-	const numOfPairWiseConflicts = 4
-	pairwiseOutputs := outputs[:(numOfPairWiseConflicts-1)*3+3]
-	// tripletOutputs := outputs[len(pairwiseOutputs):]
+	fundingKeyPair := map[string]*ed25519.KeyPair{fundingAddress.String(): peer_1.KeyPair(0)}
+	outputs = splitToAddresses(t, peer_1, outputs[0], fundingKeyPair, addresses...)
+	const conflictRepetitions = 4
+	pairwiseOutputs := outputs[:(conflictRepetitions-1)*3+3]
+	tripletOutputs := outputs[len(pairwiseOutputs):]
 
 	txs := []*ledgerstate.Transaction{}
-	for i := 0; i < numOfPairWiseConflicts; i++ {
+	for i := 0; i < conflictRepetitions; i++ {
 		sendPairWiseConflicts(t, n.Peers(), pairwiseOutputs[i*3:i*3+3], keyPairs, &txs, i)
-		// sendTripleConflicts(t, n.Peers(), outputs, &txs, i)
+		sendTripleConflicts(t, n.Peers(), tripletOutputs[i*3:i*3+3], keyPairs, &txs, i)
 	}
 	t.Logf("number of txs to verify is %d", len(txs))
 	verifyConfirmationsOnPeers(t, n.Peers(), txs)
@@ -156,16 +156,6 @@ func determineTargets(peers []*framework.Node, iteration int) []*ledgerstate.Add
 		targetAddresses = append(targetAddresses, &targetAddress)
 	}
 	return targetAddresses
-}
-
-// decides on which peer and address to use. Also returns their indexes
-func determineOriginNodeAndAddress(peers []*framework.Node, iteration int) (int, *framework.Node, int, ledgerstate.Address) {
-	peerIndex := iteration % len(peers)
-	originPeer := peers[peerIndex]
-	originAddressIndex := iteration*3 + 4
-	originAddress := originPeer.Address(originAddressIndex)
-
-	return peerIndex, originPeer, originAddressIndex, originAddress
 }
 
 func getOutputsControlledBy(t *testing.T, node *framework.Node, addresses ...ledgerstate.Address) ledgerstate.Outputs {
