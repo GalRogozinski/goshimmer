@@ -2,6 +2,7 @@ package consensus
 
 import (
 	"context"
+	"io"
 	"testing"
 	"time"
 
@@ -18,7 +19,7 @@ import (
 var tokensPerRequest int
 
 const (
-	// conflictRepetitions specify how many time we spam conflicts of each type
+	// conflictRepetitions specify how many times we spam conflicts of each type
 	conflictRepetitions = 4
 	// numberOfConflictingOutputs is the number of outputs that will conflict for each tx we send.
 	// Currently changing this value will require to change some implementation details
@@ -70,9 +71,37 @@ func TestConflictSpam(t *testing.T) {
 	for i := 0; i < conflictRepetitions; i++ {
 		txs = append(txs, sendPairWiseConflicts(t, n.Peers(), determineOutputSlice(pairwiseOutputs, i, numberOfConflictingOutputs), keyPairs, i)...)
 		txs = append(txs, sendTripleConflicts(t, n.Peers(), determineOutputSlice(tripletOutputs, i, numberOfConflictingOutputs), keyPairs, i)...)
+		printBranches(t, peer1)
+
 	}
 	t.Logf("number of txs to verify is %d", len(txs))
 	verifyConfirmationsOnPeers(t, n.Peers(), txs)
+
+	t.Logf("Done verifying, now making more faucet requests to increase mana")
+
+	for i := 0; i < len(n.Peers()); i++ {
+		tests.SendFaucetRequest(t, n.Peers()[i], fundingAddress)
+		require.Eventually(t, func() bool {
+			return tests.Balance(t, peer1, fundingAddress, ledgerstate.ColorIOTA) >= uint64(tokensPerRequest)
+		}, tests.Timeout, tests.Tick)
+	}
+	verifyConfirmationsOnPeers(t, n.Peers(), txs)
+	printBranches(t, peer1)
+}
+
+func printBranches(t *testing.T, peer1 *framework.Node) {
+	branches, err := peer1.GetDiagnosticsBranches()
+	if err != nil {
+		t.Fatal("Failed to load branches", err)
+	}
+	for {
+		line, err := branches.Read()
+		if err == io.EOF {
+			// nothing left to read
+			break
+		}
+		t.Logf("%s", line)
+	}
 }
 
 // determineOutputSlice will extract sub-slices from outputs of a certain size.
