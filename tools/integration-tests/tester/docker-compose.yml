@@ -8,6 +8,8 @@ services:
     command: /tmp/assets/entrypoint.sh
     environment:
       - TEST_NAME=${TEST_NAME}
+    stdin_open: true
+    tty: true
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ../../..:/tmp/goshimmer:rw

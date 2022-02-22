@@ -594,6 +594,22 @@ func RequireGradeOfFinalityEqual(t *testing.T, nodes framework.Nodes, expectedSt
 
 // ShutdownNetwork shuts down the network and reports errors.
 func ShutdownNetwork(ctx context.Context, t *testing.T, n interface{ Shutdown(context.Context) error }) {
+	fmt.Println("Press enter to continue")
+	if scanln, err := fmt.Scanln(); err != nil {
+		log.Fatal(err)
+	} else {
+		fmt.Printf("read %d\n", scanln)
+	}
+	if scanln, err := fmt.Scanln(); err != nil {
+		log.Fatal(err)
+	} else {
+		fmt.Printf("read %d\n", scanln)
+	}
+	if scanln, err := fmt.Scanln(); err != nil {
+		log.Fatal(err)
+	} else {
+		fmt.Printf("read %d\n", scanln)
+	}
 	log.Println("Shutting down network...")
 	require.NoError(t, n.Shutdown(ctx))
 	log.Println("Shutting down network... done")
