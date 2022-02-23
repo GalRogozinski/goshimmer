@@ -1,9 +1,11 @@
 package tests
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"testing"
 	"time"
 
@@ -595,6 +597,16 @@ func RequireGradeOfFinalityEqual(t *testing.T, nodes framework.Nodes, expectedSt
 // ShutdownNetwork shuts down the network and reports errors.
 func ShutdownNetwork(ctx context.Context, t *testing.T, n interface{ Shutdown(context.Context) error }) {
 	fmt.Println("Press enter to continue")
+
+	fmt.Printf("Enter a single Character: ")
+	reader := bufio.NewReader(os.Stdin)
+	char, _, err := reader.ReadRune()
+
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	fmt.Println(char)
 	if scanln, err := fmt.Scanln(); err != nil {
 		log.Fatal(err)
 	} else {
